@@ -1,0 +1,69 @@
+require 'erb'
+
+template = ERB.new(<<-eotemplate)
+Gem::Specification.new do |s|
+  s.name = '<%= name %>'
+  s.version = '<%= version %>'
+
+  s.required_rubygems_version = Gem::Requirement.new(">= 0") if s.respond_to? :required_rubygems_version=
+  s.authors = [<%= authors.map { |auth| "\#{auth.inspect}" }.join(",") %>]
+  s.date = "<%= date.strftime("%Y-%m-%d") %>"
+  s.description = "<%= description %>"
+  s.email = [<%= emails.map { |mail| "\#{mail.inspect}" }.join(",") %>]
+  s.extensions = [<%= exts.map { |ext| "\#{ext.inspect}" }.join(",") %>]
+  s.extra_rdoc_files = []
+  s.files = [<%= files.map { |file| "\#{file.inspect}" }.join(",") %>]
+  s.homepage = "http://www.ruby-lang.org"
+  s.licenses = [<%= licenses.map { |license| "\#{license.inspect}" }.join(",") %>]
+  s.require_paths = ["lib"]
+  s.required_ruby_version = Gem::Requirement.new(">= 1.9.2")
+  s.rubyforge_project = "<%= name %>"
+  s.rubygems_version = "<%= Gem::VERSION %>"
+  s.summary = "<%= summary %>"
+  s.test_files = [<%= test_files.map { |file| "\#{file.inspect}" }.join(",") %>]
+end
+eotemplate
+
+task :gemfile do
+  name        = "openssl"
+  authors     = ["Martin"]
+  date        = Time.now
+  description = "A wrapper around OpenSSL"
+  emails      = ['martin@example.org']
+  exts  = ['ext/openssl/extconf.rb']
+
+  version = files = test_files = nil
+
+  Dir.chdir(File.join(File.dirname(__FILE__), '..', '..')) {
+    version     = File.read('ext/openssl/ossl_version.h').match(/OSSL_VERSION[^"]*"([^"]*)"/)[1]
+    files = Dir['ext/openssl/*.{c,h,rb}'] + Dir.chdir('ext/openssl') {
+      Dir['lib/**/*']
+    }
+    test_files = Dir['test/openssl/**/*']
+  }
+
+  licenses = ['Ruby']
+  summary = 'A thin wrapper exposing OpenSSL to Ruby'
+
+
+  File.open('openssl.gemspec', 'w') { |f| f.write template.result(binding) }
+end
+
+task :package => :gemfile do
+  require 'tempfile'
+  require 'fileutils'
+
+  gemdir = Dir.mktmpdir
+  puts gemdir
+  Dir.chdir(File.join(File.dirname(__FILE__), '..', '..')) {
+    ext = File.join gemdir, 'ext'
+    test = File.join gemdir, 'test'
+    FileUtils.mkdir ext
+    FileUtils.mkdir test
+    FileUtils.cp_r 'ext/openssl', ext
+    FileUtils.cp_r 'test/openssl', test
+    FileUtils.mv File.join(ext, 'openssl', 'lib'), gemdir
+    FileUtils.mv File.join(ext, 'openssl', 'openssl.gemspec'), gemdir
+  }
+  Dir.chdir(gemdir) { system "gem build openssl.gemspec" }
+end
