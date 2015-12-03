@@ -241,6 +241,12 @@ struct rb_call_cache {
 
     vm_call_handler call;
 
+#if OPT_POLYMORPHIC_INLINE_METHOD_CACHE
+    rb_serial_t class_serials[POLYMORPHIC_CACHE_SIZE];
+    const rb_callable_method_entry_t *mes[POLYMORPHIC_CACHE_SIZE];
+    vm_call_handler calls[POLYMORPHIC_CACHE_SIZE];
+#endif
+
     union {
 	unsigned int index; /* used by ivar */
 	enum method_missing_reason method_missing_reason; /* used by method_missing */

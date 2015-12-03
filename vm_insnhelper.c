@@ -1123,9 +1123,32 @@ vm_search_method(const struct rb_call_info *ci, struct rb_call_cache *cc, VALUE 
     VALUE klass = CLASS_OF(recv);
 
 #if OPT_INLINE_METHOD_CACHE
+    int i;
     if (LIKELY(GET_GLOBAL_METHOD_STATE() == cc->method_state && RCLASS_SERIAL(klass) == cc->class_serial)) {
 	/* cache hit! */
 	return;
+#   if OPT_POLYMORPHIC_INLINE_METHOD_CACHE
+    } else {
+	if (LIKELY(GET_GLOBAL_METHOD_STATE() == cc->method_state)) {
+	    /* i = 0 will always be the same as the above branch, so we should
+	       skip checking it here. */
+	    for(i = 1; i < POLYMORPHIC_CACHE_SIZE; i++) {
+		if (RCLASS_SERIAL(klass) == cc->class_serials[i]) {
+		    cc->me = cc->mes[i];
+		    cc->class_serial = cc->class_serials[i];
+		    cc->call = cc->calls[i];
+		    /* cache hit! */
+		    return;
+		}
+	    }
+	} else {
+	    for(i = 0; i < POLYMORPHIC_CACHE_SIZE; i++) {
+		cc->mes[i] = 0;
+		cc->class_serials[i] = 0;
+		cc->calls[i] = 0;
+	    }
+	}
+#   endif
     }
 #endif
 
@@ -1135,6 +1158,19 @@ vm_search_method(const struct rb_call_info *ci, struct rb_call_cache *cc, VALUE 
 #if OPT_INLINE_METHOD_CACHE
     cc->method_state = GET_GLOBAL_METHOD_STATE();
     cc->class_serial = RCLASS_SERIAL(klass);
+
+#   if OPT_POLYMORPHIC_INLINE_METHOD_CACHE
+    for(i = POLYMORPHIC_CACHE_SIZE - 1; i > 0; i--) {
+	cc->mes[i] = cc->mes[i - 1];
+	cc->class_serials[i] = cc->class_serials[i - 1];
+	cc->calls[i] = cc->calls[i - 1];
+    }
+
+    cc->mes[0] = cc->me;
+    cc->class_serials[0] = cc->class_serial;
+    cc->calls[0] = cc->call;
+#   endif
+
 #endif
 }
 

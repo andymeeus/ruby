@@ -38,6 +38,8 @@
 /* VM running option */
 #define OPT_CHECKED_RUN              1
 #define OPT_INLINE_METHOD_CACHE      1
+#define OPT_POLYMORPHIC_INLINE_METHOD_CACHE      1
+#define POLYMORPHIC_CACHE_SIZE       6
 #define OPT_GLOBAL_METHOD_CACHE      1
 #define OPT_BLOCKINLINING            0
 
