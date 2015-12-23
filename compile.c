@@ -1697,6 +1697,7 @@ iseq_set_sequence(rb_iseq_t *iseq, LINK_ANCHOR *anchor)
 		      case TS_CALLCACHE:
 			{
 			    struct rb_call_cache *cc = &iseq->body->cc_entries[ISEQ_COMPILE_DATA(iseq)->ci_index + ISEQ_COMPILE_DATA(iseq)->ci_kw_index - 1];
+			    cc->serial = rb_next_ic_serial();
 			    generated_iseq[code_index + 1 + j] = (VALUE)cc;
 			    break;
 			}

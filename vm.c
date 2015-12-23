@@ -196,6 +196,7 @@ vm_invoke_proc(rb_thread_t *th, rb_proc_t *proc, VALUE self,
 static rb_serial_t ruby_vm_global_method_state = 1;
 static rb_serial_t ruby_vm_global_constant_state = 1;
 static rb_serial_t ruby_vm_class_serial = 1;
+static rb_serial_t ruby_vm_ic_serial = 1;
 
 #include "vm_insnhelper.h"
 #include "vm_insnhelper.c"
@@ -210,7 +211,15 @@ static rb_serial_t ruby_vm_class_serial = 1;
 rb_serial_t
 rb_next_class_serial(void)
 {
+    rb_thread_t *th = GET_THREAD();
+    EXEC_EVENT_HOOK(th, RUBY_EVENT_CLASS_SERIAL_INCR, 0, 0, 0, 0);
     return NEXT_CLASS_SERIAL();
+}
+
+rb_serial_t
+rb_next_ic_serial(void)
+{
+    return NEXT_IC_SERIAL();
 }
 
 VALUE rb_cRubyVM;

@@ -239,6 +239,8 @@ struct rb_call_cache {
     /* inline cache: values */
     const rb_callable_method_entry_t *me;
 
+    rb_serial_t serial;
+
     vm_call_handler call;
 
     union {

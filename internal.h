@@ -1215,6 +1215,7 @@ extern const char ruby_engine[];
 
 /* vm_insnhelper.h */
 rb_serial_t rb_next_class_serial(void);
+rb_serial_t rb_next_ic_serial(void);
 
 /* vm.c */
 VALUE rb_obj_is_thread(VALUE obj);

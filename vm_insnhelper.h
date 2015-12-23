@@ -179,6 +179,7 @@ enum vm_regan_acttype {
     CALL_METHOD(&calling, ci, cc); \
 } while (0)
 
+#define NEXT_IC_SERIAL() (++ruby_vm_ic_serial)
 #define NEXT_CLASS_SERIAL() (++ruby_vm_class_serial)
 #define GET_GLOBAL_METHOD_STATE() (ruby_vm_global_method_state)
 #define INC_GLOBAL_METHOD_STATE() (++ruby_vm_global_method_state)
