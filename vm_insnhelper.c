@@ -1114,24 +1114,98 @@ vm_expandarray(rb_control_frame_t *cfp, VALUE ary, rb_num_t num, int flag)
 
 static VALUE vm_call_general(rb_thread_t *th, rb_control_frame_t *reg_cfp, struct rb_calling_info *calling, const struct rb_call_info *ci, struct rb_call_cache *cc);
 
+#if OPT_INLINE_METHOD_CACHE
 static void
-vm_search_method(const struct rb_call_info *ci, struct rb_call_cache *cc, VALUE recv)
+rb_call_cache_move_chain(struct rb_call_cache *list, struct rb_call_cache *tail)
+{
+    struct rb_call_cache *old_next;
+    struct rb_call_cache *to;
+
+    if(list->next == tail) return;
+
+    rb_call_cache_move_chain(list->next, tail);
+    to = list->next;
+    old_next = to->next;
+    memcpy(to, list, sizeof(struct rb_call_cache));
+    to->next = old_next;
+}
+
+static void
+rb_call_cache_push(struct rb_call_cache *cc, const rb_callable_method_entry_t *me, vm_call_handler call, rb_serial_t method_state, rb_serial_t class_serial)
+{
+    if (cc->me) {
+	if (cc->list_size == OPT_INLINE_METHOD_CACHE_SIZE) {
+	    rb_call_cache_move_chain(cc, NULL);
+	} else {
+	    struct rb_call_cache *new_cc = ruby_xcalloc(1, sizeof(struct rb_call_cache));
+	    memcpy(new_cc, cc, sizeof(struct rb_call_cache));
+	    cc->next = new_cc;
+	    cc->list_size += 1;
+	}
+
+	cc->me = me;
+	cc->call = call;
+	cc->method_state = method_state;
+	cc->class_serial = class_serial;
+    } else {
+	cc->me = me;
+	cc->call = call;
+	cc->method_state = method_state;
+	cc->class_serial = class_serial;
+	cc->list_size = 1;
+    }
+}
+
+static struct rb_call_cache *
+rb_call_cache_use(struct rb_call_cache *head, struct rb_call_cache *cc)
+{
+    struct rb_call_cache * next_copy;
+    struct rb_call_cache hit_copy;
+    int size_copy;
+
+    if (head == cc) return head;
+
+    size_copy = head->list_size;
+    memcpy(&hit_copy, cc, sizeof(struct rb_call_cache));
+    rb_call_cache_move_chain(head, cc->next);
+
+    next_copy = head->next;
+    memcpy(head, &hit_copy, sizeof(struct rb_call_cache));
+    head->next = next_copy;
+    head->list_size = size_copy;
+
+    return head;
+}
+#endif
+
+static void
+vm_search_method(const struct rb_call_info *ci, struct rb_call_cache *head, VALUE recv)
 {
     VALUE klass = CLASS_OF(recv);
+    struct rb_call_cache * cc;
+    const rb_callable_method_entry_t *me;
+    vm_call_handler call;
+    cc = head;
 
 #if OPT_INLINE_METHOD_CACHE
-    if (LIKELY(GET_GLOBAL_METHOD_STATE() == cc->method_state && RCLASS_SERIAL(klass) == cc->class_serial)) {
-	/* cache hit! */
-	return;
+    while(cc) {
+	if (LIKELY(GET_GLOBAL_METHOD_STATE() == cc->method_state && RCLASS_SERIAL(klass) == cc->class_serial)) {
+	    /* cache hit! */
+	    rb_call_cache_use(head, cc);
+	    return;
+	}
+	cc = cc->next;
     }
 #endif
 
-    cc->me = rb_callable_method_entry(klass, ci->mid);
-    VM_ASSERT(callable_method_entry_p(cc->me));
-    cc->call = vm_call_general;
+    me = rb_callable_method_entry(klass, ci->mid);
+    VM_ASSERT(callable_method_entry_p(me));
+    call = vm_call_general;
 #if OPT_INLINE_METHOD_CACHE
-    cc->method_state = GET_GLOBAL_METHOD_STATE();
-    cc->class_serial = RCLASS_SERIAL(klass);
+    rb_call_cache_push(head, me, call, GET_GLOBAL_METHOD_STATE(), RCLASS_SERIAL(klass));
+#else
+    cc->me = me;
+    cc->call = call;
 #endif
 }
 
@@ -1202,6 +1276,8 @@ rb_equal_opt(VALUE obj1, VALUE obj2)
     cc.method_state = 0;
     cc.class_serial = 0;
     cc.me = NULL;
+    cc.next = NULL;
+    cc.list_size = 0;
     return opt_eq_func(obj1, obj2, &ci, &cc);
 }
 

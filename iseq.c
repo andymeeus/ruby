@@ -62,6 +62,26 @@ compile_data_free(struct iseq_compile_data *compile_data)
     }
 }
 
+static void
+rb_cc_pic_free(struct rb_call_cache *cc_entry)
+{
+    while(cc_entry) {
+	struct rb_call_cache *next = cc_entry->next;
+	ruby_xfree(cc_entry);
+	cc_entry = next;
+    }
+}
+
+static void
+rb_cc_entries_free(struct rb_call_cache *cc_entries, unsigned int size)
+{
+    unsigned int i;
+    for(i = 0; i < size; i++) {
+	rb_cc_pic_free(cc_entries->next);
+	cc_entries++;
+    }
+}
+
 void
 rb_iseq_free(const rb_iseq_t *iseq)
 {
@@ -82,6 +102,7 @@ rb_iseq_free(const rb_iseq_t *iseq)
 		    ruby_xfree((void *)kw_arg);
 		}
 		ruby_xfree(iseq->body->ci_entries);
+		rb_cc_entries_free(iseq->body->cc_entries, iseq->body->ci_size + iseq->body->ci_kw_size);
 		ruby_xfree(iseq->body->cc_entries);
 	    }
 	    ruby_xfree((void *)iseq->body->catch_table);

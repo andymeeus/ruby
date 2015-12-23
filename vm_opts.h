@@ -40,6 +40,7 @@
 #define OPT_INLINE_METHOD_CACHE      1
 #define OPT_GLOBAL_METHOD_CACHE      1
 #define OPT_BLOCKINLINING            0
+#define OPT_INLINE_METHOD_CACHE_SIZE 5
 
 /* architecture independent, affects generated code */
 #define OPT_OPERANDS_UNIFICATION     1
