@@ -1222,6 +1222,7 @@ rb_equal_opt(VALUE obj1, VALUE obj2)
     cc.method_state = 0;
     cc.class_serial = 0;
     cc.me = NULL;
+    cc.serial = rb_next_ic_serial();
     return opt_eq_func(obj1, obj2, &ci, &cc);
 }
 
