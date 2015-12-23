@@ -598,6 +598,9 @@ get_event_id(rb_event_flag_t event)
 	C(thread_end, THREAD_END);
 	C(fiber_switch, FIBER_SWITCH);
 	C(specified_line, SPECIFIED_LINE);
+	C(inline_cache_hit, INLINE_CACHE_HIT);
+	C(inline_cache_miss, INLINE_CACHE_MISS);
+	C(class_serial_incr, CLASS_SERIAL_INCR);
       case RUBY_EVENT_LINE | RUBY_EVENT_SPECIFIED_LINE: CONST_ID(id, "line"); return id;
 #undef C
       default:
@@ -706,6 +709,9 @@ symbol2event_flag(VALUE v)
     C(specified_line, SPECIFIED_LINE);
     C(a_call, A_CALL);
     C(a_return, A_RETURN);
+    C(inline_cache_hit, INLINE_CACHE_HIT);
+    C(inline_cache_miss, INLINE_CACHE_MISS);
+    C(class_serial_incr, CLASS_SERIAL_INCR);
 #undef C
     rb_raise(rb_eArgError, "unknown event: %"PRIsVALUE, rb_sym2str(sym));
 }
@@ -829,6 +835,21 @@ VALUE
 rb_tracearg_self(rb_trace_arg_t *trace_arg)
 {
     return trace_arg->self;
+}
+
+VALUE
+rb_tracearg_callcache_id(rb_trace_arg_t *trace_arg)
+{
+    if (trace_arg->event & (RUBY_EVENT_INLINE_CACHE_HIT | RUBY_EVENT_INLINE_CACHE_MISS)) {
+	/* ok */
+    }
+    else {
+	rb_raise(rb_eRuntimeError, "not supported by this event");
+    }
+    if (trace_arg->data == Qundef) {
+	rb_bug("tp_attr_return_value_m: unreachable");
+    }
+    return trace_arg->data;
 }
 
 VALUE
@@ -983,6 +1004,16 @@ tracepoint_attr_return_value(VALUE tpval)
 {
     return rb_tracearg_return_value(get_trace_arg());
 }
+
+/*
+ *  Return call cache id for +:inline_cache_hit+ and +:inline_cache_miss+
+ */
+static VALUE
+tracepoint_callcache_id(VALUE tpval)
+{
+    return rb_tracearg_callcache_id(get_trace_arg());
+}
+
 
 /*
  * Value from exception raised on the +:raise+ event
@@ -1485,6 +1516,7 @@ Init_vm_trace(void)
     rb_define_method(rb_cTracePoint, "self", tracepoint_attr_self, 0);
     rb_define_method(rb_cTracePoint, "return_value", tracepoint_attr_return_value, 0);
     rb_define_method(rb_cTracePoint, "raised_exception", tracepoint_attr_raised_exception, 0);
+    rb_define_method(rb_cTracePoint, "callcache_id", tracepoint_callcache_id, 0);
 
     rb_define_singleton_method(rb_cTracePoint, "stat", tracepoint_stat_s, 0);
 

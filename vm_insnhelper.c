@@ -1124,9 +1124,19 @@ static void
 vm_search_method(const struct rb_call_info *ci, struct rb_call_cache *cc, VALUE recv)
 {
     VALUE klass = CLASS_OF(recv);
+    rb_thread_t *th = GET_THREAD();
+    VALUE ccid;
+    VALUE klass_id;
+    klass_id = INT2NUM(RCLASS_SERIAL(klass));
+    ccid = INT2NUM(cc->serial);
+    assert(cc->serial);
 
 #if OPT_INLINE_METHOD_CACHE
     if (LIKELY(GET_GLOBAL_METHOD_STATE() == cc->method_state && RCLASS_SERIAL(klass) == cc->class_serial)) {
+	if ((th->event_hooks.events | th->vm->event_hooks.events) & RUBY_EVENT_INLINE_CACHE_HIT) {
+	    VALUE name = rb_class_name(klass);
+	    EXEC_EVENT_HOOK(th, RUBY_EVENT_INLINE_CACHE_HIT, recv, 0, 0, rb_ary_new3(3, ccid, klass_id, name));
+	}
 	/* cache hit! */
 	return;
     }
@@ -1135,9 +1145,13 @@ vm_search_method(const struct rb_call_info *ci, struct rb_call_cache *cc, VALUE 
     cc->me = rb_callable_method_entry(klass, ci->mid);
     VM_ASSERT(callable_method_entry_p(cc->me));
     cc->call = vm_call_general;
-#if OPT_INLINE_METHOD_CACHE
     cc->method_state = GET_GLOBAL_METHOD_STATE();
     cc->class_serial = RCLASS_SERIAL(klass);
+#if OPT_INLINE_METHOD_CACHE
+    if ((th->event_hooks.events | th->vm->event_hooks.events) & RUBY_EVENT_INLINE_CACHE_HIT) {
+	VALUE name = rb_class_name(klass);
+	EXEC_EVENT_HOOK(th, RUBY_EVENT_INLINE_CACHE_MISS, recv, 0, 0, rb_ary_new3(3, ccid, klass_id, name));
+    }
 #endif
 }
 
