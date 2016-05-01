@@ -992,7 +992,13 @@ rb_require_internal(VALUE fname, int safe)
 	    else {
 		switch (found) {
 		  case 'r':
-		    state = rb_load_internal0(th, path, 0);
+		    if (GET_VM()->load_require_file_callback) {
+			if (Qfalse == rb_funcall(GET_VM()->load_require_file_callback, rb_intern("call"), 1, path)) {
+			    state = rb_load_internal0(th, path, 0);
+			}
+		    } else {
+			state = rb_load_internal0(th, path, 0);
+		    }
 		    break;
 
 		  case 's':

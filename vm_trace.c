@@ -504,6 +504,22 @@ set_trace_func(VALUE obj, VALUE trace)
     return trace;
 }
 
+static VALUE
+set_load_required_file_func(VALUE obj, VALUE trace)
+{
+    if (NIL_P(trace)) {
+	return Qnil;
+    }
+
+    if (!rb_obj_is_proc(trace)) {
+	rb_raise(rb_eTypeError, "trace_func needs to be Proc");
+    }
+
+    GET_VM()->load_require_file_callback = trace;
+
+    return trace;
+}
+
 static void
 thread_add_trace_func(rb_thread_t *th, VALUE trace)
 {
@@ -1401,6 +1417,7 @@ Init_vm_trace(void)
 {
     /* trace_func */
     rb_define_global_function("set_trace_func", set_trace_func, 1);
+    rb_define_global_function("set_load_required_file_func", set_load_required_file_func, 1);
     rb_define_method(rb_cThread, "set_trace_func", thread_set_trace_func_m, 1);
     rb_define_method(rb_cThread, "add_trace_func", thread_add_trace_func_m, 1);
 

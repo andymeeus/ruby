@@ -1992,6 +1992,7 @@ rb_vm_mark(void *ptr)
 	rb_gc_mark(vm->expanded_load_path);
 	rb_gc_mark(vm->loaded_features);
 	rb_gc_mark(vm->loaded_features_snapshot);
+	rb_gc_mark(vm->load_require_file_callback);
 	rb_gc_mark(vm->top_self);
 	RUBY_MARK_UNLESS_NULL(vm->coverages);
 	rb_gc_mark(vm->defined_module_hash);

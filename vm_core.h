@@ -510,6 +510,7 @@ typedef struct rb_vm_struct {
     VALUE expanded_load_path;
     VALUE loaded_features;
     VALUE loaded_features_snapshot;
+    VALUE load_require_file_callback;
     struct st_table *loaded_features_index;
     struct st_table *loading_table;
 
