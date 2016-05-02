@@ -1,7 +1,5 @@
 class C1
-  def m
-    1
-  end
+  def m; 1; end
 end
 
 o1 = C1.new
