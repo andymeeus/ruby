@@ -1148,7 +1148,7 @@ vm_search_method(const struct rb_call_info *ci, struct rb_call_cache *cc, VALUE 
     cc->method_state = GET_GLOBAL_METHOD_STATE();
     cc->class_serial = RCLASS_SERIAL(klass);
 #if OPT_INLINE_METHOD_CACHE
-    if ((th->event_hooks.events | th->vm->event_hooks.events) & RUBY_EVENT_INLINE_CACHE_HIT) {
+    if ((th->event_hooks.events | th->vm->event_hooks.events) & RUBY_EVENT_INLINE_CACHE_MISS) {
 	VALUE name = rb_class_name(klass);
 	EXEC_EVENT_HOOK(th, RUBY_EVENT_INLINE_CACHE_MISS, recv, 0, 0, rb_ary_new3(3, ccid, klass_id, name));
     }
