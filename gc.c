@@ -2925,9 +2925,9 @@ heap_is_swept_object(rb_objspace_t *objspace, rb_heap_t *heap, VALUE ptr)
 }
 
 static inline int
-is_swept_object(rb_objspace_t *objspace, VALUE ptr)
+is_swept_object(rb_objspace_t *objspace, VALUE ptr, rb_heap_t * heap)
 {
-    if (heap_is_swept_object(objspace, heap_eden, ptr)) {
+    if (heap_is_swept_object(objspace, heap, ptr)) {
 	return TRUE;
     }
     else {
@@ -2940,7 +2940,7 @@ static inline int
 is_garbage_object(rb_objspace_t *objspace, VALUE ptr)
 {
     if (!is_lazy_sweeping(heap_eden) ||
-	is_swept_object(objspace, ptr) ||
+	is_swept_object(objspace, ptr, heap_eden) ||
 	MARKED_IN_BITMAP(GET_HEAP_MARK_BITS(ptr), ptr)) {
 
 	return FALSE;
