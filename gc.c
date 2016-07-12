@@ -1845,7 +1845,7 @@ newobj_init(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, int wb_prote
 }
 
 static inline VALUE
-newobj_slowpath(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace, int wb_protected)
+newobj_slowpath(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace, int wb_protected, rb_heap_t * eden)
 {
     VALUE obj;
 
@@ -1863,31 +1863,30 @@ newobj_slowpath(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objsp
 	}
     }
 
-    obj = heap_get_freeobj(objspace, heap_eden);
+    obj = heap_get_freeobj(objspace, eden);
     newobj_init(klass, flags, v1, v2, v3, wb_protected, objspace, obj);
     gc_event_hook(objspace, RUBY_INTERNAL_EVENT_NEWOBJ, obj);
     return obj;
 }
 
-NOINLINE(static VALUE newobj_slowpath_wb_protected(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace));
-NOINLINE(static VALUE newobj_slowpath_wb_unprotected(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace));
+NOINLINE(static VALUE newobj_slowpath_wb_protected(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace, rb_heap_t *eden));
+NOINLINE(static VALUE newobj_slowpath_wb_unprotected(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace, rb_heap_t *eden));
 
 static VALUE
-newobj_slowpath_wb_protected(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace)
+newobj_slowpath_wb_protected(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace, rb_heap_t *eden)
 {
-    return newobj_slowpath(klass, flags, v1, v2, v3, objspace, TRUE);
+    return newobj_slowpath(klass, flags, v1, v2, v3, objspace, TRUE, eden);
 }
 
 static VALUE
-newobj_slowpath_wb_unprotected(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace)
+newobj_slowpath_wb_unprotected(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace, rb_heap_t *eden)
 {
-    return newobj_slowpath(klass, flags, v1, v2, v3, objspace, FALSE);
+    return newobj_slowpath(klass, flags, v1, v2, v3, objspace, FALSE, eden);
 }
 
 static inline VALUE
-newobj_of(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, int wb_protected)
+newobj_of_with_eden(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, int wb_protected, rb_objspace_t * objspace, rb_heap_t *eden)
 {
-    rb_objspace_t *objspace = &rb_objspace;
     VALUE obj;
 
 #if GC_DEBUG_STRESS_TO_CLASS
@@ -1902,15 +1901,23 @@ newobj_of(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, int wb_protect
     if (!(during_gc ||
 	  ruby_gc_stressful ||
 	  gc_event_hook_available_p(objspace)) &&
-	(obj = heap_get_freeobj_head(objspace, heap_eden)) != Qfalse) {
+	(obj = heap_get_freeobj_head(objspace, eden)) != Qfalse) {
 	return newobj_init(klass, flags, v1, v2, v3, wb_protected, objspace, obj);
     }
     else {
 	return wb_protected ?
-	  newobj_slowpath_wb_protected(klass, flags, v1, v2, v3, objspace) :
-	  newobj_slowpath_wb_unprotected(klass, flags, v1, v2, v3, objspace);
+	  newobj_slowpath_wb_protected(klass, flags, v1, v2, v3, objspace, eden) :
+	  newobj_slowpath_wb_unprotected(klass, flags, v1, v2, v3, objspace, eden);
     }
 }
+
+static inline VALUE
+newobj_of(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, int wb_protected)
+{
+    rb_objspace_t *objspace = &rb_objspace;
+    return newobj_of_with_eden(klass, flags, v1, v2, v3, wb_protected, objspace, heap_eden);
+}
+
 
 VALUE
 rb_wb_unprotected_newobj_of(VALUE klass, VALUE flags)
@@ -3674,6 +3681,17 @@ gc_sweep_continue(rb_objspace_t *objspace, rb_heap_t *heap)
 #endif
 
 static void
+gc_mark_before_sweep(rb_heap_t *heap)
+{
+    struct heap_page *page;
+    page = heap->sweep_pages;
+    while (page) {
+	page->flags.before_sweep = TRUE;
+	page = page->next;
+    }
+}
+
+static void
 gc_sweep(rb_objspace_t *objspace)
 {
     const unsigned int immediate_sweep = objspace->flags.immediate_sweep;
@@ -3691,13 +3709,8 @@ gc_sweep(rb_objspace_t *objspace)
 #endif
     }
     else {
-	struct heap_page *page;
 	gc_sweep_start(objspace);
-	page = heap_eden->sweep_pages;
-	while (page) {
-	    page->flags.before_sweep = TRUE;
-	    page = page->next;
-	}
+	gc_mark_before_sweep(heap_eden);
 	gc_sweep_step(objspace, heap_eden);
     }
 
@@ -5283,9 +5296,9 @@ gc_marks_start(rb_objspace_t *objspace, int full_mark)
 
 #if GC_ENABLE_INCREMENTAL_MARK
 static void
-gc_marks_wb_unprotected_objects(rb_objspace_t *objspace)
+gc_marks_wb_unprotected_objects(rb_objspace_t *objspace, rb_heap_t *heap)
 {
-    struct heap_page *page = heap_eden->pages;
+    struct heap_page *page = heap->pages;
 
     while (page) {
 	bits_t *mark_bits = page->mark_bits;
@@ -5367,7 +5380,7 @@ gc_marks_finish(rb_objspace_t *objspace)
 
 	objspace->flags.during_incremental_marking = FALSE;
 	/* check children of all marked wb-unprotected objects */
-	gc_marks_wb_unprotected_objects(objspace);
+	gc_marks_wb_unprotected_objects(objspace, heap_eden);
     }
 #endif /* GC_ENABLE_INCREMENTAL_MARK */
 
