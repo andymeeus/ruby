@@ -852,7 +852,7 @@ static void gc_sweep_finish(rb_objspace_t *objspace);
 static int  gc_sweep_step(rb_objspace_t *objspace, rb_heap_t *heap);
 static void gc_sweep_rest(rb_objspace_t *objspace);
 #if GC_ENABLE_LAZY_SWEEP
-static void gc_sweep_continue(rb_objspace_t *objspace, rb_heap_t *heap);
+static void gc_sweep_continue(rb_objspace_t *objspace, rb_heap_t *heap, int need_increment);
 #endif
 
 static void gc_mark(rb_objspace_t *objspace, VALUE ptr);
@@ -1683,10 +1683,10 @@ heap_prepare(rb_objspace_t *objspace, rb_heap_t *heap)
 
 #if GC_ENABLE_LAZY_SWEEP
     if (is_lazy_sweeping(objspace)) {
-	gc_sweep_continue(objspace, heap_eden);
-	gc_sweep_continue(objspace, heap_tclass);
+	gc_sweep_continue(objspace, heap_eden, heap == heap_eden ? 1 : 0);
+	gc_sweep_continue(objspace, heap_tclass, heap == heap_tclass ? 1 : 0);
 	if (heap->free_pages == NULL) {
-	    if(!has_sweeping_pages(heap_eden) && has_sweeping_pages(heap_tclass)) {
+	    if(has_sweeping_pages(heap_eden) || has_sweeping_pages(heap_tclass)) {
 		gc_sweep_rest(objspace);
 	    }
 	}
@@ -3694,13 +3694,13 @@ gc_sweep_rest(rb_objspace_t *objspace)
 
 #if GC_ENABLE_LAZY_SWEEP
 static void
-gc_sweep_continue(rb_objspace_t *objspace, rb_heap_t *heap)
+gc_sweep_continue(rb_objspace_t *objspace, rb_heap_t *heap, int need_increment)
 {
     if (RGENGC_CHECK_MODE) assert(dont_gc == FALSE);
 
     gc_enter(objspace, "sweep_continue");
 #if USE_RGENGC
-    if (objspace->rgengc.need_major_gc == GPR_FLAG_NONE && heap_increment(objspace, heap)) {
+    if (objspace->rgengc.need_major_gc == GPR_FLAG_NONE && need_increment && heap_increment(objspace, heap)) {
 	gc_report(3, objspace, "gc_sweep_continue: success heap_increment().\n");
     }
 #endif
