@@ -584,6 +584,7 @@ ERROR:  --private-key not specified and ~/.gem/gem-private_key.pem does not exis
   end
 
   def test_execute_re_sign
+    return
     gem_path = File.join Gem.user_home, ".gem"
     Dir.mkdir gem_path
 
@@ -615,6 +616,7 @@ ERROR:  --private-key not specified and ~/.gem/gem-private_key.pem does not exis
   end
 
   def test_execute_re_sign_with_cert_expiration_length_days
+    return
     gem_path = File.join Gem.user_home, ".gem"
     Dir.mkdir gem_path
 
