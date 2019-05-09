@@ -7303,8 +7303,8 @@ update_id_to_obj(st_data_t *key, st_data_t *value, st_data_t arg, int exists)
     }
 }
 
-static void
-gc_move(rb_objspace_t *objspace, VALUE scan, VALUE free)
+static VALUE
+gc_move(rb_objspace_t *objspace, VALUE scan, VALUE free, VALUE moved_list)
 {
     int marked;
     int wb_unprotected;
@@ -7383,7 +7383,10 @@ gc_move(rb_objspace_t *objspace, VALUE scan, VALUE free)
     /* Assign forwarding address */
     src->as.moved.flags = T_MOVED;
     src->as.moved.destination = (VALUE)dest;
-    GC_ASSERT(BUILTIN_TYPE((VALUE)dest) != T_NONE);
+    src->as.moved.next = moved_list;
+    assert(BUILTIN_TYPE((VALUE)dest) != T_NONE);
+
+    return (VALUE)src;
 }
 
 struct heap_cursor {
@@ -7493,13 +7496,15 @@ int compare_free_slots(const void *left, const void *right, void *dummy)
 
 typedef int page_compare_func_t(const void *, const void *, void *);
 
-static void
+static VALUE
 gc_compact_heap(rb_objspace_t *objspace, page_compare_func_t *comparator)
 {
     struct heap_cursor free_cursor;
     struct heap_cursor scan_cursor;
     struct heap_page **page_list;
+    VALUE moved_list;
 
+    moved_list = Qfalse;
     memset(objspace->rcompactor.considered_count_table, 0, T_MASK * sizeof(size_t));
     memset(objspace->rcompactor.moved_count_table, 0, T_MASK * sizeof(size_t));
 
@@ -7562,7 +7567,7 @@ gc_compact_heap(rb_objspace_t *objspace, page_compare_func_t *comparator)
             GC_ASSERT(BUILTIN_TYPE(scan_cursor.slot) != T_NONE);
             GC_ASSERT(BUILTIN_TYPE(scan_cursor.slot) != T_MOVED);
 
-            gc_move(objspace, (VALUE)scan_cursor.slot, (VALUE)free_cursor.slot);
+            moved_list = gc_move(objspace, (VALUE)scan_cursor.slot, (VALUE)free_cursor.slot, moved_list);
 
             GC_ASSERT(BUILTIN_TYPE(free_cursor.slot) != T_MOVED);
             GC_ASSERT(BUILTIN_TYPE(free_cursor.slot) != T_NONE);
@@ -7573,6 +7578,8 @@ gc_compact_heap(rb_objspace_t *objspace, page_compare_func_t *comparator)
         }
     }
     free(page_list);
+
+    return moved_list;
 }
 
 static void
@@ -8205,6 +8212,7 @@ static VALUE
 gc_verify_compaction_references(int argc, VALUE *argv, VALUE mod)
 {
     rb_objspace_t *objspace = &rb_objspace;
+    VALUE moved_list;
 
     VALUE opt = Qnil;
     static ID keyword_ids[2];
@@ -8236,7 +8244,7 @@ gc_verify_compaction_references(int argc, VALUE *argv, VALUE mod)
         heap_add_pages(objspace, heap_eden, heap_allocated_pages);
     }
 
-    gc_compact_heap(objspace, comparator);
+    moved_list = gc_compact_heap(objspace);
 
     heap_eden->freelist = NULL;
     gc_update_references(objspace);
@@ -8248,6 +8256,12 @@ gc_verify_compaction_references(int argc, VALUE *argv, VALUE mod)
     heap_eden->using_page = NULL;
 
     gc_verify_internal_consistency(mod);
+
+    while (moved_list) {
+        VALUE current = moved_list;
+        moved_list = RANY(moved_list)->as.moved.next;
+        poison_object(current);
+    }
 
     /* GC after compaction to eliminate T_MOVED */
     rb_gc();
