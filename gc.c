@@ -7313,7 +7313,7 @@ gc_move(rb_objspace_t *objspace, VALUE scan, VALUE free, VALUE moved_list)
     RVALUE *dest = (RVALUE *)free;
     RVALUE *src = (RVALUE *)scan;
 
-    gc_report(4, objspace, "Moving object: %s -> %p\n", obj_info(scan), (void *)free);
+    gc_report(4, objspace, "Moving object: %p -> %p\n", (void*)scan, (void *)free);
 
     GC_ASSERT(BUILTIN_TYPE(scan) != T_NONE);
     GC_ASSERT(BUILTIN_TYPE(free) == T_NONE);
@@ -7878,7 +7878,7 @@ gc_update_object_references(rb_objspace_t *objspace, VALUE obj)
 {
     RVALUE *any = RANY(obj);
 
-    gc_report(4, objspace, "update-refs: %s ->", obj_info(obj));
+    gc_report(4, objspace, "update-refs: %p ->", (void *)obj);
 
     switch(BUILTIN_TYPE(obj)) {
         case T_CLASS:
@@ -8024,8 +8024,11 @@ gc_update_object_references(rb_objspace_t *objspace, VALUE obj)
 
     UPDATE_IF_MOVED(objspace, RBASIC(obj)->klass);
 
-    gc_report(4, objspace, "update-refs: %s <-", obj_info(obj));
+    gc_report(4, objspace, "update-refs: %p <-", (void *)obj);
 }
+
+static void reachable_object_check_moved_i(VALUE ref, void *data);
+
 static int
 gc_ref_update(void *vstart, void *vend, size_t stride, void * data)
 {
@@ -8087,6 +8090,8 @@ gc_update_references(rb_objspace_t * objspace)
     rb_objspace_each_objects_without_setup(gc_ref_update, objspace);
     rb_vm_update_references(vm);
     rb_transient_heap_update_references();
+    global_symbols.ids = rb_gc_new_location(global_symbols.ids);
+    global_symbols.dsymbol_fstr_hash = rb_gc_new_location(global_symbols.dsymbol_fstr_hash);
     gc_update_table_refs(objspace, global_symbols.str_sym);
     gc_update_table_refs(objspace, finalizer_table);
 }
@@ -8122,6 +8127,7 @@ rb_gc_compact(VALUE mod)
 {
     rb_objspace_t *objspace = &rb_objspace;
 
+    if (dont_gc) return Qnil;
     /* Ensure objects are pinned */
     rb_gc();
 
@@ -8215,7 +8221,7 @@ gc_verify_compaction_references(int argc, VALUE *argv, VALUE mod)
     VALUE moved_list;
 
     VALUE opt = Qnil;
-    static ID keyword_ids[2];
+    static ID keyword_ids[3];
     VALUE kwvals[2];
 
     kwvals[1] = Qtrue;
@@ -8236,6 +8242,8 @@ gc_verify_compaction_references(int argc, VALUE *argv, VALUE mod)
         }
     }
 
+    if (dont_gc) return Qnil;
+
     /* Ensure objects are pinned */
     rb_gc();
 
@@ -8244,7 +8252,7 @@ gc_verify_compaction_references(int argc, VALUE *argv, VALUE mod)
         heap_add_pages(objspace, heap_eden, heap_allocated_pages);
     }
 
-    moved_list = gc_compact_heap(objspace);
+    moved_list = gc_compact_heap(objspace, comparator);
 
     heap_eden->freelist = NULL;
     gc_update_references(objspace);
@@ -8257,11 +8265,13 @@ gc_verify_compaction_references(int argc, VALUE *argv, VALUE mod)
 
     gc_verify_internal_consistency(mod);
 
+#if 0
     while (moved_list) {
         VALUE current = moved_list;
         moved_list = RANY(moved_list)->as.moved.next;
         poison_object(current);
     }
+#endif
 
     /* GC after compaction to eliminate T_MOVED */
     rb_gc();
