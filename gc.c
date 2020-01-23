@@ -6889,6 +6889,7 @@ rb_gc_writebarrier(VALUE a, VALUE b)
     }
     else { /* slow path */
 	gc_writebarrier_incremental(a, b, objspace);
+        gc_pin(objspace, b);
     }
 }
 
