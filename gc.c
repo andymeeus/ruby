@@ -4340,10 +4340,6 @@ static void gc_compact(rb_objspace_t *, int, int, int, int);
 static void
 gc_sweep_start(rb_objspace_t *objspace)
 {
-    if (!objspace->flags.during_minor_gc) {
-        gc_compact(objspace, FALSE, FALSE, FALSE, FALSE);
-    }
-
     gc_mode_transition(objspace, gc_mode_sweeping);
     gc_sweep_start_heap(objspace, heap_eden);
 }
@@ -4354,6 +4350,11 @@ gc_sweep_finish(rb_objspace_t *objspace)
     gc_report(1, objspace, "gc_sweep_finish\n");
 
     gc_prof_set_heap_info(objspace);
+
+    if (!objspace->flags.during_minor_gc) {
+        gc_compact(objspace, FALSE, FALSE, FALSE, FALSE);
+    }
+
     heap_pages_free_unused_pages(objspace);
 
     /* if heap_pages has unused pages, then assign them to increment */
