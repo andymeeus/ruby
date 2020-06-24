@@ -648,7 +648,6 @@ typedef struct rb_heap_struct {
     struct list_head pages;
     struct heap_page *sweeping_page; /* iterator for .pages */
     struct heap_page *compact_cursor;
-    struct RMoved * moved_list;
 #if GC_ENABLE_INCREMENTAL_MARK
     struct heap_page *pooled_pages;
 #endif
@@ -1775,12 +1774,23 @@ heap_page_allocate(rb_objspace_t *objspace)
 
     /* assign heap_page body (contains heap_page_header and RVALUEs) */
     page_body = (struct heap_page_body *)rb_aligned_malloc(HEAP_PAGE_ALIGN, HEAP_PAGE_SIZE);
+
+    fprintf(stderr, "mallocd size %d actual page size %d, allocated page (start) %p - (end) %p\n", malloc_usable_size(page_body), getpagesize(), page_body, (uintptr_t)page_body + HEAP_PAGE_SIZE);
+
     if (page_body == 0) {
 	rb_memerror();
     }
 
     /* assign heap_page entry */
     page = calloc1(sizeof(struct heap_page));
+
+    intptr_t expected_end_address = (intptr_t)page_body + (getpagesize() * 4);
+
+    if (page > page_body && page < expected_end_address) {
+        fprintf(stderr, "oh boy\n");
+        _exit(1);
+    }
+
     if (page == 0) {
         rb_aligned_free(page_body);
 	rb_memerror();
@@ -4203,20 +4213,24 @@ gc_setup_mark_bits(struct heap_page *page)
 }
 
 static int gc_is_moveable_obj(rb_objspace_t *objspace, VALUE obj);
-static VALUE gc_move(rb_objspace_t *objspace, VALUE scan, VALUE free, struct RMoved * moved_list);
+static VALUE gc_move(rb_objspace_t *objspace, VALUE scan, VALUE free);
 
 static short
 try_move(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *sweep_page, VALUE vp)
 {
     struct heap_page * cursor = heap->compact_cursor;
 
-    if(mprotect(GET_PAGE_BODY(cursor->start), HEAP_PAGE_SIZE, PROT_READ | PROT_WRITE)) {
-        rb_bug("Couldn't unprotect page %p", (void *)GET_PAGE_BODY(cursor->start));
-    } else {
-        gc_report(5, objspace, "Unprotecting page in move %p\n", (void *)GET_PAGE_BODY(cursor->start));
-    }
-
     while(1) {
+        struct heap_page_body * body;
+        body = GET_PAGE_BODY(cursor->start);
+
+        /* Unlock the page */
+        if(mprotect(body, HEAP_PAGE_SIZE, PROT_READ | PROT_WRITE)) {
+            rb_bug("Couldn't unprotect page %p", (void *)body);
+        } else {
+            gc_report(5, objspace, "Unprotecting page in move %p\n", (void *)body);
+        }
+
 	bits_t *mark_bits = cursor->mark_bits;
         RVALUE * p = cursor->start;
         RVALUE * offset = p - NUM_IN_PAGE(p);
@@ -4235,11 +4249,14 @@ try_move(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *sweep_page,
 
                         if (gc_is_moveable_obj(objspace, (VALUE)p)) {
                             objspace->rcompactor.moved_count_table[BUILTIN_TYPE((VALUE)p)]++;
-                            gc_move(objspace, (VALUE)p, vp, heap->moved_list);
-                            if(mprotect(GET_PAGE_BODY(cursor->start), HEAP_PAGE_SIZE, PROT_NONE)) {
-                                rb_bug("Couldn't protect page %p", (void *)GET_PAGE_BODY(cursor->start));
+                            gc_move(objspace, (VALUE)p, vp);
+
+                            /* Lock the page */
+                            if(mprotect(body, HEAP_PAGE_SIZE, PROT_NONE)) {
+                                rb_bug("Couldn't protect page %p", (void *)body);
                             } else {
                                 gc_report(5, objspace, "Protecting page in move %p\n", (void *)GET_PAGE_BODY(cursor->start));
+                                fprintf(stderr, "Protecting page in move (start) %p\n", (void *)body);
                             }
                             return 1;
                         }
@@ -4248,6 +4265,15 @@ try_move(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *sweep_page,
                     bits >>= 1;
                 } while (bits);
             }
+        }
+
+        /* Couldn't find anything to move, so lock the current page and move to the next page */
+        fprintf(stderr, "Protecting page %p\n", body);
+        if(mprotect(body, HEAP_PAGE_SIZE, PROT_NONE)) {
+            rb_bug("Couldn't protect page %p", (void *)body);
+        } else {
+            gc_report(5, objspace, "Protecting page before iteration %p\n", (void *)body);
+            fprintf(stderr, "Protected page %p\n", (void *)body);
         }
 
         struct heap_page * next;
@@ -4263,12 +4289,6 @@ try_move(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *sweep_page,
         }
     }
 
-    /* Assume this page has moved objects on it, and protect the page */
-    if(mprotect(GET_PAGE_BODY(cursor->start), HEAP_PAGE_SIZE, PROT_NONE)) {
-        rb_bug("Couldn't protect page %p", (void *)GET_PAGE_BODY(cursor->start));
-    } else {
-        gc_report(5, objspace, "Protecting page in move %p\n", (void *)GET_PAGE_BODY(cursor->start));
-    }
     return 0;
 }
 
@@ -4277,17 +4297,25 @@ gc_unprotect_pages(rb_objspace_t *objspace, rb_heap_t *heap)
 {
     struct heap_page *cursor = heap->compact_cursor;
     while(cursor) {
-        if(mprotect(GET_PAGE_BODY(cursor->start), HEAP_PAGE_SIZE, PROT_READ | PROT_WRITE)) {
+        struct heap_page_body *body;
+
+        bits_t bits = (bits_t)(cursor->start);
+        body = (struct heap_page_body *)(bits & ~(HEAP_PAGE_ALIGN_MASK));
+
+        //body = (bits_t)(cursor->start);
+
+        if(mprotect(body, HEAP_PAGE_SIZE, PROT_READ | PROT_WRITE)) {
             rb_bug("Couldn't unprotect page %p", (void *)GET_PAGE_BODY(cursor->start));
         } else {
             gc_report(5, objspace, "Unprotecting page %p\n", (void *)GET_PAGE_BODY(cursor->start));
+            fprintf(stderr, "Unprotecting page %p\n", (void *)GET_PAGE_BODY(cursor->start));
         }
         cursor = list_next(&heap->pages, cursor, page_node);
     }
 }
 
 static void gc_update_references(rb_objspace_t * objspace);
-static void gc_unlink_moved_list(rb_objspace_t *objspace, struct RMoved * moved_list_head);
+static void gc_unlink_moved_list(rb_objspace_t *objspace, rb_heap_t *heap);
 
 static struct sigaction old_handler;
 
@@ -4295,14 +4323,14 @@ static void
 gc_compact_finish(rb_objspace_t *objspace, rb_heap_t *heap)
 {
     gc_unprotect_pages(objspace, heap);
-    heap->compact_cursor = NULL;
     gc_update_references(objspace);
-    gc_unlink_moved_list(objspace, heap_eden->moved_list);
-    heap_eden->moved_list = Qfalse;
+    gc_unlink_moved_list(objspace, heap);
+    sigaction(SIGSEGV, &old_handler, NULL);
+
+    heap->compact_cursor = NULL;
     rb_clear_constant_cache();
     objspace->flags.compact = 0;
     objspace->flags.during_compacting = FALSE;
-    sigaction(SIGBUS, &old_handler, NULL);
 }
 
 static inline int
@@ -4621,22 +4649,70 @@ gc_sweep_continue(rb_objspace_t *objspace, rb_heap_t *heap)
 }
 
 static void
-read_barrier_handler(int sig, siginfo_t * info, void * data)
+evict_page(rb_objspace_t * objspace, struct heap_page *evict_page)
 {
-    fprintf(stderr, "Attempt to access memory at address %p\n", info->si_addr);
-    rb_bug_for_fatal_signal(old_handler.sa_handler, sig, 0, "Inside read barrier");
+    intptr_t p, pend;
+
+    p = (intptr_t)evict_page->start; pend = p + evict_page->total_slots;
+
+    for (; p != pend; p += sizeof(VALUE)) {
+        VALUE vp = (VALUE)p;
+        switch(BUILTIN_TYPE(vp)) {
+          case T_MOVED:
+              /* Remove the MOVED slot from the moved list */
+              fprintf(stderr, "Moving object back: %p -> %p\n", (void *)rb_gc_location(vp), (void *)vp);
+              gc_move(objspace, rb_gc_location(vp), vp);
+            break;
+          default:
+            break;
+        }
+    }
 }
 
-static struct RMoved moved_list_head;
+static void
+read_barrier_handler(int sig, siginfo_t * info, void * data)
+{
+    rb_objspace_t * objspace = &rb_objspace;
+
+    RVALUE * maybe_rvalue = RANY((intptr_t)info->si_addr - ((intptr_t)info->si_addr % sizeof(RVALUE)));
+
+    GC_ASSERT(((intptr_t)maybe_rvalue % sizeof(RVALUE)) == 0);
+
+    if (maybe_rvalue < heap_pages_lomem || maybe_rvalue > heap_pages_himem) {
+        rb_bug_for_fatal_signal(old_handler.sa_handler, sig, 0, "Inside read barrier");
+    }
+
+    if(mprotect(GET_PAGE_BODY(maybe_rvalue), HEAP_PAGE_SIZE, PROT_READ | PROT_WRITE)) {
+        rb_bug("Couldn't unprotect page");
+    } else {
+        if (is_pointer_to_heap(objspace, maybe_rvalue)) {
+            struct heap_page * page;
+            page = GET_HEAP_PAGE(maybe_rvalue);
+
+            gc_report(5, objspace, "Evicting T_MOVED from page %p\n", (void *)page);
+            evict_page(objspace, page);
+            /* It is a pointer to the heap, so we need to move all objects back to the page */
+            fprintf(stderr, "Attempt \n to \n access \n memory at address %p\n", info->si_addr);
+            fprintf(stderr, "Attempt to access memory at address %p\n", info->si_addr);
+            fprintf(stderr, "yayayayayayaayayaya\n");
+        } else {
+            struct heap_page * page;
+            page = GET_HEAP_PAGE(maybe_rvalue); // what the page address should be?
+            fprintf(stderr, "fault address %p page address: %p\n", info->si_addr, page);
+            /* It's not a pointer to the heap, so we need to delegate */
+            rb_bug_for_fatal_signal(old_handler.sa_handler, sig, 0, "Inside read barrier");
+        }
+    }
+
+    _exit(1);
+}
 
 static void
 gc_compact_start(rb_objspace_t *objspace, rb_heap_t *heap)
 {
     struct heap_page * cursor = list_tail(&heap->pages, struct heap_page, page_node);
-    memset(&moved_list_head, 0, sizeof(RVALUE));
 
     heap->compact_cursor = cursor;
-    heap->moved_list = &moved_list_head;
 
     /* Set up read barrier for pages containing MOVED objects */
     struct sigaction action;
@@ -4645,10 +4721,9 @@ gc_compact_start(rb_objspace_t *objspace, rb_heap_t *heap)
     action.sa_sigaction = read_barrier_handler;
     action.sa_flags = SA_SIGINFO | SA_ONSTACK;
 
-    sigaction(SIGBUS, &action, &old_handler);
+    sigaction(SIGSEGV, &action, &old_handler);
 
     objspace->profile.compact_count++;
-    heap->moved_list = Qfalse;
 }
 
 /* Routines for sorting heap pages. */
@@ -7896,7 +7971,7 @@ gc_is_moveable_obj(rb_objspace_t *objspace, VALUE obj)
 }
 
 static VALUE
-gc_move(rb_objspace_t *objspace, VALUE scan, VALUE free, struct RMoved * moved_list)
+gc_move(rb_objspace_t *objspace, VALUE scan, VALUE free)
 {
     int marked;
     int wb_unprotected;
@@ -7974,7 +8049,7 @@ gc_move(rb_objspace_t *objspace, VALUE scan, VALUE free, struct RMoved * moved_l
     /* Assign forwarding address */
     src->as.moved.flags = T_MOVED;
     src->as.moved.destination = (VALUE)dest;
-    list_add(&moved_list->as.head, &src->as.moved.as.node);
+    MARK_IN_BITMAP(GET_HEAP_PINNED_BITS(src), src);
     GC_ASSERT(BUILTIN_TYPE((VALUE)dest) != T_NONE);
 
     return (VALUE)src;
@@ -8698,28 +8773,35 @@ rb_gc_compact(rb_execution_context_t *ec, VALUE self)
 }
 
 static void
-gc_unlink_moved_list(rb_objspace_t *objspace, struct RMoved * moved_list_head)
+gc_unlink_moved_list(rb_objspace_t *objspace, rb_heap_t *heap)
 {
-    /* For each moved slot */
-    struct RMoved * obj = NULL, *next;
-    list_for_each_safe(&RMOVED(moved_list_head)->as.head, obj, next, as.node) {
-        if (obj != moved_list_head) {
-            struct heap_page *page;
+    struct heap_page *cursor = heap->compact_cursor;
+    int i;
+    RVALUE *p, *offset;
+    bits_t *bits, bitset;
 
-            page = GET_HEAP_PAGE((VALUE)obj);
+    while(cursor) {
+        p = cursor->start;
+        offset = p - NUM_IN_PAGE(p);
+        bits = cursor->pinned_bits;
 
-            /* clear the memory for that moved slot */
-            memset(obj, 0, sizeof(VALUE));
-            page->free_slots++;
-            heap_page_add_freeobj(objspace, page, (VALUE)obj);
-
-            if (page->free_slots == page->total_slots && heap_pages_freeable_pages > 0) {
-                heap_pages_freeable_pages--;
-                heap_unlink_page(objspace, heap_eden, page);
-                heap_add_page(objspace, heap_tomb, page);
+        for (i=0; i < HEAP_PAGE_BITMAP_LIMIT; i++) {
+            bitset = bits[i];
+            if (bitset) {
+                p = offset + i * BITS_BITLENGTH;
+                do {
+                    if (BUILTIN_TYPE((VALUE)p) == T_MOVED) {
+                        memset(p, 0, sizeof(VALUE));
+                        CLEAR_IN_BITMAP(GET_HEAP_PINNED_BITS(p), p);
+                        cursor->free_slots++;
+                        heap_page_add_freeobj(objspace, cursor, (VALUE)p);
+                    }
+                    p++;
+                    bitset >>= 1;
+                } while (bitset);
             }
-            objspace->profile.total_freed_objects++;
         }
+        cursor = list_next(&heap->pages, cursor, page_node);
     }
 }
 

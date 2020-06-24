@@ -285,8 +285,12 @@ pathobj_realpath(VALUE pathobj)
 	return pathobj;
     }
     else {
+      if (RB_TYPE_P(pathobj, T_MOVED)) {
+        return pathobj_realpath(rb_gc_location(pathobj));
+      } else {
 	VM_ASSERT(RB_TYPE_P(pathobj, T_ARRAY));
 	return RARRAY_AREF(pathobj, PATHOBJ_REALPATH);
+      }
     }
 }
 
